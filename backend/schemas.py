@@ -8,6 +8,7 @@ class SearchRequest(BaseModel):
 class Item(BaseModel):
     retailer: str
     image: Optional[str]
+    image_url: Optional[str]
     original_price: float
     currency: str
     price_twd: float = Field(..., description="Price converted to TWD")
@@ -15,6 +16,8 @@ class Item(BaseModel):
     tax_twd: float
     final_price_twd: float
     url: Optional[str]
+    sizes: Optional[List[str]] = Field(default_factory=list)
+    weight: Optional[str] = "N/A"
     is_lowest: bool = False
 
 class SearchResponse(BaseModel):

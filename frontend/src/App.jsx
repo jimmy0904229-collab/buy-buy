@@ -1,23 +1,38 @@
 import React, { useState } from 'react'
 
 function PriceCard({ item }) {
+  const placeholder = 'https://placehold.co/400x400?text=Product+Image'
+  const src = item.image_url || item.image || placeholder
+
+  const onImgError = (e) => {
+    e.target.onerror = null
+    e.target.src = placeholder
+  }
+
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden shadow-md w-full max-w-xl">
-      <div className="flex">
-        <img src={item.image} alt={item.retailer} className="w-40 h-40 object-cover" />
-        <div className="p-4 flex-1">
-          <div className="flex justify-between items-start">
-            <h3 className="text-lg font-semibold">{item.retailer}</h3>
-            {item.is_lowest && (
-              <span className="bg-emerald-500 text-emerald-900 text-xs font-semibold px-2 py-1 rounded">Lowest Price</span>
+    <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden shadow-md">
+      <div className="relative">
+        {item.is_lowest && (
+          <div className="absolute top-2 right-2 z-10">
+            <span className="bg-emerald-500 text-emerald-900 text-xs font-semibold px-2 py-1 rounded">Lowest</span>
+          </div>
+        )}
+        <img src={src} alt={item.retailer} onError={onImgError} className="w-full h-48 object-cover" />
+      </div>
+      <div className="p-4">
+        <h3 className="text-lg font-semibold">{item.retailer}</h3>
+        <p className="text-sm text-gray-300 mt-2">Original: {item.original_price} {item.currency}</p>
+        <div className="mt-3 flex items-center justify-between">
+          <div className="text-sm text-gray-400">
+            {item.sizes && item.sizes.length > 0 ? (
+              <span className="px-2 py-1 bg-gray-700 rounded">Sizes: {item.sizes.slice(0,4).join(', ')}</span>
+            ) : (
+              <span className="px-2 py-1 bg-gray-700 rounded">Weight: {item.weight || 'N/A'}</span>
             )}
           </div>
-          <p className="text-sm text-gray-300 mt-2">Original: {item.original_price} {item.currency}</p>
-          <p className="mt-4 text-gray-200">Shipping (TWD): {item.shipping_twd}</p>
-          <p className="mt-1 text-gray-200">Tax (TWD): {item.tax_twd}</p>
-          <div className="mt-4">
-            <div className="text-sm text-gray-400">Final Landed Cost</div>
-            <div className="text-2xl font-extrabold text-emerald-400">NT$ {item.final_price_twd}</div>
+          <div className="text-right">
+            <div className="text-sm text-gray-400">Final</div>
+            <div className="text-xl font-extrabold text-emerald-400">NT$ {item.final_price_twd}</div>
           </div>
         </div>
       </div>
@@ -72,12 +87,14 @@ export default function App() {
           <button className="px-4 py-2 bg-emerald-500 text-emerald-900 rounded font-semibold" disabled={loading}>{loading? 'Searching...':'Search'}</button>
         </form>
 
-        <div className="space-y-4">
-          {error && <div className="text-red-400">{error}</div>}
-          {results.length === 0 && !loading && !error && <div className="text-gray-400">No results yet — try searching.</div>}
-          {results.map((r, idx) => (
-            <PriceCard key={idx} item={r} />
-          ))}
+        <div>
+          {error && <div className="text-red-400 mb-4">{error}</div>}
+          {results.length === 0 && !loading && !error && <div className="text-gray-400 mb-4">No results yet — try searching.</div>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {results.map((r, idx) => (
+              <PriceCard key={idx} item={r} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
