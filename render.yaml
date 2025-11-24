@@ -1,0 +1,11 @@
+# Optional Render service configuration (example)
+# Adjust service names, env and build commands to your Render setup.
+services:
+  - type: web
+    name: hype-price-tracker
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8000"
