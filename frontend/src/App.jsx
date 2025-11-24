@@ -29,20 +29,30 @@ export default function App() {
   const [q, setQ] = useState('Barbour Spey')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
 
   async function doSearch(e) {
     e && e.preventDefault()
     setLoading(true)
+    setError(null)
     try {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ q }),
       })
-      const data = await res.json()
-      setResults(data.results || [])
+      if (!res.ok) {
+        const text = await res.text()
+        console.error('Search API error', res.status, text)
+        setError(`Search failed: ${res.status}`)
+        setResults([])
+      } else {
+        const data = await res.json()
+        setResults(data.results || [])
+      }
     } catch (err) {
       console.error(err)
+      setError('Network error')
       setResults([])
     } finally {
       setLoading(false)
@@ -63,7 +73,8 @@ export default function App() {
         </form>
 
         <div className="space-y-4">
-          {results.length === 0 && !loading && <div className="text-gray-400">No results yet — try searching.</div>}
+          {error && <div className="text-red-400">{error}</div>}
+          {results.length === 0 && !loading && !error && <div className="text-gray-400">No results yet — try searching.</div>}
           {results.map((r, idx) => (
             <PriceCard key={idx} item={r} />
           ))}

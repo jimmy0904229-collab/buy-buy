@@ -23,17 +23,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Optionally mount frontend static files if present at runtime
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend_dist")
-frontend_dir = os.path.abspath(frontend_dir)
-if os.path.exists(frontend_dir):
-    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
-
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search(req: SearchRequest):
     if not req.q:
         raise HTTPException(status_code=400, detail="Query parameter `q` is required")
+
+    # simple log for Render to show the incoming search in service logs
+    try:
+        print("Search triggered for:", req.q)
+    except Exception:
+        pass
 
     raw_items = []
     # Prefer End scraper if available
@@ -70,3 +70,10 @@ async def search(req: SearchRequest):
             it.is_lowest = (it is lowest)
 
     return SearchResponse(query=req.q, results=results)
+
+
+# Optionally mount frontend static files if present at runtime (mount last so API routes are preferred)
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend_dist")
+frontend_dir = os.path.abspath(frontend_dir)
+if os.path.exists(frontend_dir):
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
