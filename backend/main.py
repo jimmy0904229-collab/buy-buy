@@ -6,6 +6,11 @@ from typing import List
 
 from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
+# try to import the real End scraper; if not available, we'll fall back to dummy
+try:
+    from .scrapers.end_playwright import scrape_end
+except Exception:
+    scrape_end = None
 from .utils.calc import calculate_landed_cost
 
 app = FastAPI(title="HypePrice Tracker API")
@@ -30,8 +35,17 @@ async def search(req: SearchRequest):
     if not req.q:
         raise HTTPException(status_code=400, detail="Query parameter `q` is required")
 
-    # Use dummy scraper for now (returns list of dicts)
-    raw_items = await scrape_dummy(req.q)
+    raw_items = []
+    # Prefer End scraper if available
+    if scrape_end is not None:
+        try:
+            raw_items = await scrape_end(req.q)
+        except Exception:
+            raw_items = []
+
+    # Fallback to dummy if real scraper returned nothing
+    if not raw_items:
+        raw_items = await scrape_dummy(req.q)
 
     results: List[Item] = []
     for r in raw_items:
