@@ -1,10 +1,22 @@
 ### Multi-stage Dockerfile for HypePrice Tracker
 # Stage 1: Build frontend with Node (Vite)
-FROM node:18-alpine AS frontend-build
+FROM node:18-bullseye-slim AS frontend-build
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --silent || npm install --silent
-COPY frontend ./
+
+# Copy only package files first for better cacheability
+COPY frontend/package.json frontend/package-lock.json ./
+
+# Use npm ci when lockfile exists; fall back to npm install if needed
+# Use flags to reduce failures related to peer deps and permission issues in CI
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+RUN if [ -f package-lock.json ]; then \
+            npm ci --prefer-offline --no-audit --no-progress --legacy-peer-deps --unsafe-perm || npm install --no-audit --no-progress --legacy-peer-deps --unsafe-perm; \
+        else \
+            npm install --no-audit --no-progress --legacy-peer-deps --unsafe-perm; \
+        fi
+
+# Copy rest of frontend sources and build
+COPY frontend/ .
 RUN npm run build
 
 # Stage 2: Python runtime with Playwright browsers
