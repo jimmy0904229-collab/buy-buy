@@ -62,6 +62,19 @@ export default function App() {
   const [applyTax, setApplyTax] = useState(true)
   const [taxThreshold, setTaxThreshold] = useState(0)
   const TAX_RATE = 0.17
+  const [originCountry, setOriginCountry] = useState('US')
+  const [weightLbs, setWeightLbs] = useState(1)
+
+  // Estimated per-lb rates in TWD (reference: BuyandShip pricing page). These are estimates
+  // to help quick calculations; users should consult the official page for exact fees.
+  const ORIGIN_RATES = {
+    US: 150,
+    GB: 200,
+    JP: 100,
+    HK: 60,
+    AU: 220,
+    EU: 210,
+  }
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -147,6 +160,19 @@ export default function App() {
           </div>
           <div className="mt-3 md:mt-0 flex items-center gap-2">
             <a className="text-sm text-emerald-300 underline" href="https://www.buyandship.com.tw/" target="_blank" rel="noreferrer">運費參考 BuyandShip</a>
+            <label className="text-sm text-gray-300 ml-4 mr-2">Origin</label>
+            <select value={originCountry} onChange={e => { setOriginCountry(e.target.value); const rate = ORIGIN_RATES[e.target.value] || 0; setShippingCost(Math.round((weightLbs||0) * rate)); }} className="p-2 bg-gray-800 border border-gray-700 rounded">
+              <option value="US">United States</option>
+              <option value="GB">United Kingdom</option>
+              <option value="JP">Japan</option>
+              <option value="HK">Hong Kong</option>
+              <option value="AU">Australia</option>
+              <option value="EU">Europe</option>
+            </select>
+
+            <label className="text-sm text-gray-300 ml-4 mr-2">Weight (lbs)</label>
+            <input type="number" min="0" step="0.1" value={weightLbs} onChange={e => { const v = Number(e.target.value); setWeightLbs(v); const rate = ORIGIN_RATES[originCountry] || 0; setShippingCost(Math.round(v * rate)); }} className="w-20 p-2 bg-gray-800 border border-gray-700 rounded text-gray-100" />
+
             <label className="text-sm text-gray-300 ml-4 mr-2">Shipping NT$</label>
             <input type="number" value={shippingCost} onChange={e => setShippingCost(Number(e.target.value))} className="w-24 p-2 bg-gray-800 border border-gray-700 rounded text-gray-100" />
             <label className="text-sm text-gray-300 ml-4 mr-2">Apply Tax</label>
