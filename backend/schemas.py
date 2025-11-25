@@ -15,6 +15,7 @@ class Item(BaseModel):
     shipping_twd: float
     tax_twd: float
     final_price_twd: float
+    landed_cost_estimate: float = Field(..., description="Estimated landed cost in TWD")
     url: Optional[str]
     sizes: Optional[List[str]] = Field(default_factory=list)
     weight: Optional[str] = "N/A"

@@ -1,4 +1,6 @@
 import os
+import requests
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -6,112 +8,61 @@ from typing import List
 
 from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
-from playwright.async_api import async_playwright
+from .utils.calc import calculate_landed_cost, convert_to_twd
 
-# We'll use a lightweight Playwright scraper for Cox the Saddler
-async def scrape_cox_saddler(query: str, max_results: int = 12):
-    """Scrape Cox the Saddler search results.
+# SerpApi configuration (placeholder key)
+SERPAPI_KEY = "6313cd4d2dd307a65fb95b1ae33f759cc0558415e5f36c9698568bd7fabe267f"
+SERPAPI_URL = "https://serpapi.com/search"
 
-    Returns list of dicts with keys: retailer, image, original_price, currency, url, sizes, weight
-    """
-    results = []
-    if not query:
-        return results
 
-    search_q = query.replace(' ', '+')
-    search_url = f"https://www.coxthesaddler.co.uk/search-results?q={search_q}"
+def parse_price_and_currency(price_text: str):
+    """Return (amount: float, currency: str) inferred from price_text."""
+    if not price_text:
+        return 0.0, 'USD'
 
+    text = price_text.strip()
+    # common patterns
+    # NT$ or TWD
+    if 'NT$' in text or 'TWD' in text or 'NT' in text:
+        m = re.search(r'([0-9,]+\.?[0-9]*)', text)
+        if m:
+            return float(m.group(1).replace(',', '')), 'TWD'
+    # GBP
+    m = re.search(r'£\s*([0-9,]+\.?[0-9]*)', text)
+    if m:
+        return float(m.group(1).replace(',', '')), 'GBP'
+    # JPY
+    m = re.search(r'¥\s*([0-9,]+\.?[0-9]*)', text)
+    if m:
+        return float(m.group(1).replace(',', '')), 'JPY'
+    # USD (dollar symbol ambiguous)
+    m = re.search(r'\$\s*([0-9,]+\.?[0-9]*)', text)
+    if m:
+        return float(m.group(1).replace(',', '')), 'USD'
+
+    # fallback: extract first number and assume USD
+    m = re.search(r'([0-9,]+\.?[0-9]*)', text)
+    if m:
+        return float(m.group(1).replace(',', '')), 'USD'
+
+    return 0.0, 'USD'
+
+
+def call_serpapi(query: str, gl: str = 'tw', hl: str = 'zh-tw'):
+    params = {
+        'engine': 'google_shopping',
+        'q': query,
+        'gl': gl,
+        'hl': hl,
+        'api_key': SERPAPI_KEY,
+    }
     try:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(search_url, timeout=30000)
-            # Wait briefly for content
-            await page.wait_for_timeout(1000)
-
-            # Try common product container selectors
-            selectors = [
-                'li.product',
-                'ul.products li',
-                '.product',
-                '.product-item',
-                '.grid-item',
-            ]
-            nodes = []
-            for s in selectors:
-                try:
-                    nodes = await page.query_selector_all(s)
-                    if nodes and len(nodes) > 0:
-                        break
-                except Exception:
-                    nodes = []
-
-            # Fallback: any anchor that links to product pages
-            if not nodes:
-                nodes = await page.query_selector_all('a[href*="/product"]')
-
-            count = 0
-            for n in nodes:
-                if count >= max_results:
-                    break
-                try:
-                    # title
-                    title = ''
-                    title_el = await n.query_selector('h2, .product-title, .name, a')
-                    if title_el:
-                        title = (await title_el.inner_text()).strip()
-                    else:
-                        title = (await n.inner_text()).split('\n')[0].strip()
-
-                    # link
-                    href = await n.get_attribute('href') or ''
-                    if href and not href.startswith('http'):
-                        link = 'https://www.coxthesaddler.co.uk' + href
-                    else:
-                        link = href
-
-                    # image
-                    img = None
-                    img_el = await n.query_selector('img')
-                    if img_el:
-                        img = await img_el.get_attribute('src') or await img_el.get_attribute('data-src')
-
-                    # price - find any text with £
-                    price_text = ''
-                    price_el = await n.query_selector('.price, .product-price, .amount, span')
-                    if price_el:
-                        price_text = (await price_el.inner_text()).strip()
-                    else:
-                        txt = await n.inner_text()
-                        price_text = txt
-
-                    import re
-                    m = re.search(r'£\s*([0-9,]+\.?[0-9]*)', price_text)
-                    price_val = 0.0
-                    if m:
-                        price_val = float(m.group(1).replace(',', ''))
-
-                    results.append({
-                        'retailer': 'Cox the Saddler',
-                        'image': img,
-                        'image_url': img,
-                        'original_price': price_val,
-                        'currency': 'GBP',
-                        'url': link,
-                        'sizes': [],
-                        'weight': 'N/A',
-                    })
-                    count += 1
-                except Exception:
-                    continue
-
-            await browser.close()
+        resp = requests.get(SERPAPI_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
     except Exception:
-        # don't raise; caller will fallback
-        return []
+        return {}
 
-    return results
-from .utils.calc import calculate_landed_cost
 
 app = FastAPI(title="HypePrice Tracker API")
 
@@ -129,99 +80,54 @@ async def search(req: SearchRequest):
     if not req.q:
         raise HTTPException(status_code=400, detail="Query parameter `q` is required")
 
-    # simple log for Render to show the incoming search in service logs
     try:
         print("Search triggered for:", req.q)
     except Exception:
         pass
 
-    async def get_mock_data(query: str):
-        # Build realistic mock items based on query keywords
-        q = (query or "").lower()
-        default_image = "https://placehold.co/400x400?text=Product+Image"
-        mock = []
-        # small library of brand-specific models
-        brand_models = {
-            'barbour': [
-                ('Barbour Bedale', 329.0, 'GBP'),
-                ('Barbour Ashby', 289.0, 'GBP'),
-                ('Barbour Beaufort', 349.0, 'GBP'),
-            ],
-            'carhartt': [
-                ('Carhartt Detroit Jacket', 149.0, 'USD'),
-                ('Carhartt Duck Active Jacket', 179.0, 'USD'),
-            ],
-            'ralph': [
-                ('Ralph Lauren Polo Jacket', 299.0, 'USD'),
-                ('Ralph Lauren Stadium Jacket', 349.0, 'USD'),
-            ],
-        }
+    # Call SerpApi
+    data = call_serpapi(req.q)
+    shopping = data.get('shopping_results') or []
 
-        entries = []
-        for k, models in brand_models.items():
-            if k in q:
-                entries = models
-                break
+    items = []
+    placeholder = "https://placehold.co/400x400?text=Product+Image"
 
-        if not entries:
-            # generic product variants
-            entries = [
-                (f"{query} Classic", 120.0, 'USD'),
-                (f"{query} Premium", 199.0, 'USD'),
-                (f"{query} Limited", 249.0, 'USD'),
-                (f"{query} Reissue", 179.0, 'USD'),
-            ]
+    if shopping:
+        for s in shopping:
+            try:
+                title = s.get('title') or s.get('product_title') or s.get('name') or ''
+                price_text = s.get('price') or s.get('extracted_price') or s.get('price_string') or ''
+                thumbnail = s.get('thumbnail') or s.get('thumbnail_image') or s.get('image') or ''
+                source = s.get('source') or s.get('merchant') or s.get('store') or s.get('displayed_at') or 'Retailer'
+                link = s.get('link') or s.get('product_link') or s.get('link') or ''
 
-        # expand to 6-8 items with small price variations and sizes
-        i = 0
-        while len(mock) < 6 and i < len(entries) * 3:
-            base = entries[i % len(entries)]
-            name = base[0]
-            price = round(base[1] * (1 + (i % 3) * 0.05), 2)
-            currency = base[2]
-            mock.append({
-                'retailer': f"Mock Retailer {i+1}",
-                'image': default_image,
-                'image_url': default_image,
-                'original_price': price,
-                'currency': currency,
-                'url': f"https://example.com/{name.replace(' ', '-').lower()}",
-                'sizes': ['S', 'M', 'L'] if 'women' not in q else ['XS','S','M'],
-                'weight': f"{1.0 + (i%3)*0.2}kg",
-            })
-            i += 1
+                amount, currency = parse_price_and_currency(str(price_text))
 
-        return mock
+                # compute landed cost using existing helper
+                calc = calculate_landed_cost(amount, currency)
 
-    raw_items = []
-    # Try Cox the Saddler scraper first but don't crash
-    try:
-        raw_items = await scrape_cox_saddler(req.q)
-    except Exception:
-        raw_items = []
+                item = Item(
+                    retailer=source,
+                    image=thumbnail or None,
+                    image_url=thumbnail or None,
+                    original_price=amount,
+                    currency=currency,
+                    price_twd=calc['price_twd'],
+                    shipping_twd=calc['shipping_twd'],
+                    tax_twd=calc['tax_twd'],
+                    final_price_twd=calc['final_price_twd'],
+                    landed_cost_estimate=calc['final_price_twd'],
+                    url=link,
+                    sizes=[],
+                    weight='N/A',
+                )
+                items.append(item)
+            except Exception:
+                continue
 
-    # Attempt to enrich scraped items (extract image_url and sizes if present)
-    enriched = []
-    for r in raw_items:
-        try:
-            image_url = r.get('image') or r.get('image_url') or None
-            sizes = r.get('sizes') or r.get('available_sizes') or []
-            weight = r.get('weight') or 'N/A'
-            enriched.append({
-                'retailer': r.get('retailer', 'unknown'),
-                'image': image_url,
-                'image_url': image_url,
-                'original_price': r.get('original_price', 0.0),
-                'currency': r.get('currency', 'USD'),
-                'url': r.get('url'),
-                'sizes': sizes,
-                'weight': weight,
-            })
-        except Exception:
-            continue
-
-    if not enriched:
-        # fallback to dummy scraper function which may provide basic items
+    # Fallback to mock/dummy if nothing
+    if not items:
+        # try dummy scraper
         try:
             fallback = await scrape_dummy(req.q)
         except Exception:
@@ -229,54 +135,84 @@ async def search(req: SearchRequest):
 
         if fallback:
             for r in fallback:
-                enriched.append({
-                    'retailer': r.get('retailer', 'unknown'),
-                    'image': r.get('image'),
-                    'image_url': r.get('image'),
-                    'original_price': r.get('original_price', 0.0),
-                    'currency': r.get('currency', 'USD'),
-                    'url': r.get('url'),
-                    'sizes': r.get('sizes') or ['S','M','L'],
-                    'weight': r.get('weight') or 'N/A',
-                })
+                calc = calculate_landed_cost(r.get('original_price', 0.0), r.get('currency', 'USD'))
+                items.append(Item(
+                    retailer=r.get('retailer', 'unknown'),
+                    image=r.get('image'),
+                    image_url=r.get('image'),
+                    original_price=r.get('original_price', 0.0),
+                    currency=r.get('currency', 'USD'),
+                    price_twd=calc['price_twd'],
+                    shipping_twd=calc['shipping_twd'],
+                    tax_twd=calc['tax_twd'],
+                    final_price_twd=calc['final_price_twd'],
+                    landed_cost_estimate=calc['final_price_twd'],
+                    url=r.get('url'),
+                    sizes=r.get('sizes') or [],
+                    weight=r.get('weight') or 'N/A',
+                ))
+        else:
+            # smart mock
+            async def get_mock_data(query: str):
+                q = (query or '').lower()
+                default_image = placeholder
+                mock = []
+                brand_models = {
+                    'barbour': [
+                        ('Barbour Bedale', 329.0, 'GBP'),
+                        ('Barbour Ashby', 289.0, 'GBP'),
+                        ('Barbour Beaufort', 349.0, 'GBP'),
+                    ],
+                }
+                entries = []
+                for k, models in brand_models.items():
+                    if k in q:
+                        entries = models
+                        break
+                if not entries:
+                    entries = [
+                        (f"{query} Classic", 120.0, 'USD'),
+                        (f"{query} Premium", 199.0, 'USD'),
+                        (f"{query} Limited", 249.0, 'USD'),
+                    ]
+                i = 0
+                while len(mock) < 6 and i < len(entries) * 3:
+                    base = entries[i % len(entries)]
+                    name = base[0]
+                    price = round(base[1] * (1 + (i % 3) * 0.05), 2)
+                    currency = base[2]
+                    calc = calculate_landed_cost(price, currency)
+                    mock.append(Item(
+                        retailer=f"Mock Retailer {i+1}",
+                        image=default_image,
+                        image_url=default_image,
+                        original_price=price,
+                        currency=currency,
+                        price_twd=calc['price_twd'],
+                        shipping_twd=calc['shipping_twd'],
+                        tax_twd=calc['tax_twd'],
+                        final_price_twd=calc['final_price_twd'],
+                        landed_cost_estimate=calc['final_price_twd'],
+                        url=f"https://example.com/{name.replace(' ', '-').lower()}",
+                        sizes=['S','M','L'],
+                        weight=f"{1.0 + (i%3)*0.2}kg",
+                    ))
+                    i += 1
+                return mock
 
-    # If still empty, create smart mock data
-    if not enriched:
-        enriched = await get_mock_data(req.q)
+            items = await get_mock_data(req.q)
 
-    results: List[Item] = []
-    for r in enriched:
-        try:
-            calc = calculate_landed_cost(r.get("original_price", 0.0), r.get("currency", "USD"))
-            item = Item(
-                retailer=r.get("retailer", "unknown"),
-                image=r.get("image"),
-                image_url=r.get("image_url") or r.get("image"),
-                original_price=r.get("original_price", 0.0),
-                currency=r.get("currency", "USD"),
-                price_twd=calc["price_twd"],
-                shipping_twd=calc.get("shipping_twd", 0.0),
-                tax_twd=calc.get("tax_twd", 0.0),
-                final_price_twd=calc["final_price_twd"],
-                url=r.get("url"),
-                sizes=r.get("sizes") or [],
-                weight=r.get("weight") or "N/A",
-            )
-            results.append(item)
-        except Exception:
-            continue
-
-    # Mark lowest
-    if results:
-        lowest = min(results, key=lambda x: x.final_price_twd)
-        for it in results:
+    # mark lowest
+    if items:
+        lowest = min(items, key=lambda x: x.final_price_twd)
+        for it in items:
             it.is_lowest = (it is lowest)
 
-    return SearchResponse(query=req.q, results=results)
+    return SearchResponse(query=req.q, results=items)
 
 
-# Optionally mount frontend static files if present at runtime (mount last so API routes are preferred)
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend_dist")
+# mount frontend at the end
+frontend_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend_dist')
 frontend_dir = os.path.abspath(frontend_dir)
 if os.path.exists(frontend_dir):
-    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+    app.mount('/', StaticFiles(directory=frontend_dir, html=True), name='frontend')
