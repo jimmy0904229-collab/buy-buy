@@ -8,11 +8,14 @@ from typing import List
 
 from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
-from .utils.calc import calculate_landed_cost, convert_to_twd
+from .utils.calc import calculate_landed_cost, convert_to_twd, normalize_price_string_to_twd
 
 # SerpApi configuration (placeholder key)
 SERPAPI_KEY = "6313cd4d2dd307a65fb95b1ae33f759cc0558415e5f36c9698568bd7fabe267f"
 SERPAPI_URL = "https://serpapi.com/search"
+
+
+# use normalize_price_string_to_twd from utils.calc for normalization
 
 
 def parse_price_and_currency(price_text: str):
@@ -102,21 +105,32 @@ async def search(req: SearchRequest):
                 link = s.get('link') or s.get('product_link') or s.get('link') or ''
 
                 amount, currency = parse_price_and_currency(str(price_text))
+                # preserve original string
+                original_price_string = str(price_text) if price_text is not None else ''
 
-                # compute landed cost using existing helper
-                calc = calculate_landed_cost(amount, currency)
+                # normalize to integer TWD for fair comparisons
+                price_twd = normalize_price_string_to_twd(original_price_string)
+
+                # compute shipping, tax and final in integer TWD
+                shipping = 800
+                tax = int(round((price_twd + shipping) * 0.17))
+                final_price = int(round(price_twd + shipping + tax))
+
+                # try to also capture parsed numeric and currency for display
+                amount, currency = parse_price_and_currency(original_price_string)
 
                 item = Item(
                     retailer=source,
                     image=thumbnail or None,
                     image_url=thumbnail or None,
                     original_price=amount,
+                    original_price_string=original_price_string,
                     currency=currency,
-                    price_twd=calc['price_twd'],
-                    shipping_twd=calc['shipping_twd'],
-                    tax_twd=calc['tax_twd'],
-                    final_price_twd=calc['final_price_twd'],
-                    landed_cost_estimate=calc['final_price_twd'],
+                    price_twd=price_twd,
+                    shipping_twd=shipping,
+                    tax_twd=tax,
+                    final_price_twd=final_price,
+                    landed_cost_estimate=final_price,
                     url=link,
                     sizes=[],
                     weight='N/A',
@@ -135,18 +149,24 @@ async def search(req: SearchRequest):
 
         if fallback:
             for r in fallback:
-                calc = calculate_landed_cost(r.get('original_price', 0.0), r.get('currency', 'USD'))
+                original_price_string = r.get('original_price_string') or str(r.get('original_price', ''))
+                price_twd = normalize_price_string_to_twd(original_price_string)
+                shipping = 800
+                tax = int(round((price_twd + shipping) * 0.17))
+                final_price = int(round(price_twd + shipping + tax))
+
                 items.append(Item(
                     retailer=r.get('retailer', 'unknown'),
                     image=r.get('image'),
                     image_url=r.get('image'),
-                    original_price=r.get('original_price', 0.0),
+                    original_price=float(r.get('original_price', 0.0)),
+                    original_price_string=original_price_string,
                     currency=r.get('currency', 'USD'),
-                    price_twd=calc['price_twd'],
-                    shipping_twd=calc['shipping_twd'],
-                    tax_twd=calc['tax_twd'],
-                    final_price_twd=calc['final_price_twd'],
-                    landed_cost_estimate=calc['final_price_twd'],
+                    price_twd=price_twd,
+                    shipping_twd=shipping,
+                    tax_twd=tax,
+                    final_price_twd=final_price,
+                    landed_cost_estimate=final_price,
                     url=r.get('url'),
                     sizes=r.get('sizes') or [],
                     weight=r.get('weight') or 'N/A',
@@ -181,18 +201,24 @@ async def search(req: SearchRequest):
                     name = base[0]
                     price = round(base[1] * (1 + (i % 3) * 0.05), 2)
                     currency = base[2]
-                    calc = calculate_landed_cost(price, currency)
+                    # normalize mock price and produce integer TWD
+                    original_price_string = f"{price} {currency}"
+                    price_twd = normalize_price_string_to_twd(original_price_string)
+                    shipping = 800
+                    tax = int(round((price_twd + shipping) * 0.17))
+                    final_price = int(round(price_twd + shipping + tax))
                     mock.append(Item(
                         retailer=f"Mock Retailer {i+1}",
                         image=default_image,
                         image_url=default_image,
                         original_price=price,
+                        original_price_string=original_price_string,
                         currency=currency,
-                        price_twd=calc['price_twd'],
-                        shipping_twd=calc['shipping_twd'],
-                        tax_twd=calc['tax_twd'],
-                        final_price_twd=calc['final_price_twd'],
-                        landed_cost_estimate=calc['final_price_twd'],
+                        price_twd=price_twd,
+                        shipping_twd=shipping,
+                        tax_twd=tax,
+                        final_price_twd=final_price,
+                        landed_cost_estimate=final_price,
                         url=f"https://example.com/{name.replace(' ', '-').lower()}",
                         sizes=['S','M','L'],
                         weight=f"{1.0 + (i%3)*0.2}kg",

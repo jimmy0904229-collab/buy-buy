@@ -33,3 +33,81 @@ def calculate_landed_cost(original_price: float, currency: str, shipping_twd: fl
         "tax_twd": tax,
         "final_price_twd": final,
     }
+
+
+def normalize_price_string_to_twd(price_string: str) -> int:
+    """Normalize a price string to integer TWD.
+
+    This extracts numeric value and detects currency symbols/keywords. Returns rounded integer TWD.
+    """
+    if not price_string:
+        return 0
+
+    text = str(price_string).strip()
+
+    # NT/TWD explicit
+    if 'NT$' in text or 'TWD' in text or text.upper().startswith('NT'):
+        m = __import__('re').search(r'([0-9,]+\.?[0-9]*)', text)
+        if m:
+            try:
+                val = float(m.group(1).replace(',', ''))
+                return int(round(val))
+            except Exception:
+                return 0
+
+    # GBP
+    if '£' in text or 'GBP' in text.upper():
+        m = __import__('re').search(r'£\s*([0-9,]+\.?[0-9]*)', text)
+        if not m:
+            m = __import__('re').search(r'([0-9,]+\.?[0-9]*)', text)
+        if m:
+            try:
+                val = float(m.group(1).replace(',', ''))
+                return int(round(val * RATES['GBP']))
+            except Exception:
+                return 0
+
+    # JPY
+    if '¥' in text or 'JPY' in text.upper():
+        m = __import__('re').search(r'[¥\s]*([0-9,]+\.?[0-9]*)', text)
+        if m:
+            try:
+                val = float(m.group(1).replace(',', ''))
+                return int(round(val * RATES['JPY']))
+            except Exception:
+                return 0
+
+    # EUR
+    if '€' in text or 'EUR' in text.upper():
+        m = __import__('re').search(r'€\s*([0-9,]+\.?[0-9]*)', text)
+        if not m:
+            m = __import__('re').search(r'([0-9,]+\.?[0-9]*)', text)
+        if m:
+            try:
+                val = float(m.group(1).replace(',', ''))
+                return int(round(val * 34.0))
+            except Exception:
+                return 0
+
+    # USD / $ (but not NT$ which handled above)
+    if '$' in text or 'USD' in text.upper():
+        m = __import__('re').search(r'\$\s*([0-9,]+\.?[0-9]*)', text)
+        if not m:
+            m = __import__('re').search(r'([0-9,]+\.?[0-9]*)', text)
+        if m:
+            try:
+                val = float(m.group(1).replace(',', ''))
+                return int(round(val * RATES['USD']))
+            except Exception:
+                return 0
+
+    # fallback: first number as TWD
+    m = __import__('re').search(r'([0-9,]+\.?[0-9]*)', text)
+    if m:
+        try:
+            val = float(m.group(1).replace(',', ''))
+            return int(round(val))
+        except Exception:
+            return 0
+
+    return 0

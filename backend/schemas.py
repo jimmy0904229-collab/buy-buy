@@ -10,12 +10,13 @@ class Item(BaseModel):
     image: Optional[str]
     image_url: Optional[str]
     original_price: float
+    original_price_string: Optional[str] = None
     currency: str
-    price_twd: float = Field(..., description="Price converted to TWD")
-    shipping_twd: float
-    tax_twd: float
-    final_price_twd: float
-    landed_cost_estimate: float = Field(..., description="Estimated landed cost in TWD")
+    price_twd: int = Field(..., description="Price converted to TWD as integer")
+    shipping_twd: int
+    tax_twd: int
+    final_price_twd: int
+    landed_cost_estimate: int = Field(..., description="Estimated landed cost in TWD")
     url: Optional[str]
     sizes: Optional[List[str]] = Field(default_factory=list)
     weight: Optional[str] = "N/A"
