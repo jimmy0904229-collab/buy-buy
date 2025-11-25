@@ -6,11 +6,111 @@ from typing import List
 
 from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
-# try to import the real End scraper; if not available, we'll fall back to dummy
-try:
-    from .scrapers.end_playwright import scrape_end
-except Exception:
-    scrape_end = None
+from playwright.async_api import async_playwright
+
+# We'll use a lightweight Playwright scraper for Cox the Saddler
+async def scrape_cox_saddler(query: str, max_results: int = 12):
+    """Scrape Cox the Saddler search results.
+
+    Returns list of dicts with keys: retailer, image, original_price, currency, url, sizes, weight
+    """
+    results = []
+    if not query:
+        return results
+
+    search_q = query.replace(' ', '+')
+    search_url = f"https://www.coxthesaddler.co.uk/search-results?q={search_q}"
+
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(search_url, timeout=30000)
+            # Wait briefly for content
+            await page.wait_for_timeout(1000)
+
+            # Try common product container selectors
+            selectors = [
+                'li.product',
+                'ul.products li',
+                '.product',
+                '.product-item',
+                '.grid-item',
+            ]
+            nodes = []
+            for s in selectors:
+                try:
+                    nodes = await page.query_selector_all(s)
+                    if nodes and len(nodes) > 0:
+                        break
+                except Exception:
+                    nodes = []
+
+            # Fallback: any anchor that links to product pages
+            if not nodes:
+                nodes = await page.query_selector_all('a[href*="/product"]')
+
+            count = 0
+            for n in nodes:
+                if count >= max_results:
+                    break
+                try:
+                    # title
+                    title = ''
+                    title_el = await n.query_selector('h2, .product-title, .name, a')
+                    if title_el:
+                        title = (await title_el.inner_text()).strip()
+                    else:
+                        title = (await n.inner_text()).split('\n')[0].strip()
+
+                    # link
+                    href = await n.get_attribute('href') or ''
+                    if href and not href.startswith('http'):
+                        link = 'https://www.coxthesaddler.co.uk' + href
+                    else:
+                        link = href
+
+                    # image
+                    img = None
+                    img_el = await n.query_selector('img')
+                    if img_el:
+                        img = await img_el.get_attribute('src') or await img_el.get_attribute('data-src')
+
+                    # price - find any text with £
+                    price_text = ''
+                    price_el = await n.query_selector('.price, .product-price, .amount, span')
+                    if price_el:
+                        price_text = (await price_el.inner_text()).strip()
+                    else:
+                        txt = await n.inner_text()
+                        price_text = txt
+
+                    import re
+                    m = re.search(r'£\s*([0-9,]+\.?[0-9]*)', price_text)
+                    price_val = 0.0
+                    if m:
+                        price_val = float(m.group(1).replace(',', ''))
+
+                    results.append({
+                        'retailer': 'Cox the Saddler',
+                        'image': img,
+                        'image_url': img,
+                        'original_price': price_val,
+                        'currency': 'GBP',
+                        'url': link,
+                        'sizes': [],
+                        'weight': 'N/A',
+                    })
+                    count += 1
+                except Exception:
+                    continue
+
+            await browser.close()
+    except Exception:
+        # don't raise; caller will fallback
+        return []
+
+    return results
 from .utils.calc import calculate_landed_cost
 
 app = FastAPI(title="HypePrice Tracker API")
@@ -94,12 +194,11 @@ async def search(req: SearchRequest):
         return mock
 
     raw_items = []
-    # Try real scraper first but don't crash
-    if scrape_end is not None:
-        try:
-            raw_items = await scrape_end(req.q)
-        except Exception:
-            raw_items = []
+    # Try Cox the Saddler scraper first but don't crash
+    try:
+        raw_items = await scrape_cox_saddler(req.q)
+    except Exception:
+        raw_items = []
 
     # Attempt to enrich scraped items (extract image_url and sizes if present)
     enriched = []
