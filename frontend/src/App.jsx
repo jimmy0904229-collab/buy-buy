@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 
-function PriceCard({ item }) {
+function PriceCard({ item, shippingCost, applyTax, taxThreshold, taxRate }) {
   const placeholder = 'https://placehold.co/400x400?text=Product+Image'
   const src = item.image_url || item.image || placeholder
 
@@ -34,8 +34,18 @@ function PriceCard({ item }) {
             )}
           </div>
           <div className="text-right">
-            <div className="text-sm text-gray-400">Final</div>
-            <div className="text-xl font-extrabold text-emerald-400">NT$ {item.final_price_twd}</div>
+            <div className="text-sm text-gray-400">Your Final</div>
+            <div className="text-xl font-extrabold text-emerald-400">
+              NT$ {
+                (() => {
+                  const base = Number(item.price_twd || 0)
+                  const ship = Number(shippingCost || 0)
+                  const tax = (applyTax && base >= Number(taxThreshold || 0)) ? Math.round((base + ship) * (taxRate || 0.17)) : 0
+                  return base + ship + tax
+                })()
+              }
+            </div>
+            <div className="text-xs text-gray-400">Shipping: NT$ {Number(shippingCost || 0)}{applyTax? ` · Tax ${Math.round((taxRate||0.17)*100)}%` : ''}</div>
           </div>
         </div>
       </div>
@@ -48,6 +58,10 @@ export default function App() {
   const [results, setResults] = useState([])
   const [sortOption, setSortOption] = useState('recommended')
   const [storeFilter, setStoreFilter] = useState('All Stores')
+  const [shippingCost, setShippingCost] = useState(800)
+  const [applyTax, setApplyTax] = useState(true)
+  const [taxThreshold, setTaxThreshold] = useState(0)
+  const TAX_RATE = 0.17
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -111,8 +125,8 @@ export default function App() {
           <button className="px-4 py-2 bg-emerald-500 text-emerald-900 rounded font-semibold" disabled={loading}>{loading? 'Searching...':'Search'}</button>
         </form>
 
-        {/* Control bar: sort + store filter */}
-        <div className="flex items-center gap-4 mb-6">
+        {/* Control bar: sort + store filter + shipping/tax controls */}
+        <div className="flex flex-col md:flex-row md:items-center md:gap-4 mb-6">
           <div>
             <label className="text-sm text-gray-300 mr-2">Sort</label>
             <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="p-2 bg-gray-800 border border-gray-700 rounded">
@@ -131,6 +145,15 @@ export default function App() {
               ))}
             </select>
           </div>
+          <div className="mt-3 md:mt-0 flex items-center gap-2">
+            <a className="text-sm text-emerald-300 underline" href="https://www.buyandship.com.tw/" target="_blank" rel="noreferrer">運費參考 BuyandShip</a>
+            <label className="text-sm text-gray-300 ml-4 mr-2">Shipping NT$</label>
+            <input type="number" value={shippingCost} onChange={e => setShippingCost(Number(e.target.value))} className="w-24 p-2 bg-gray-800 border border-gray-700 rounded text-gray-100" />
+            <label className="text-sm text-gray-300 ml-4 mr-2">Apply Tax</label>
+            <input type="checkbox" checked={applyTax} onChange={e => setApplyTax(e.target.checked)} className="align-middle" />
+            <label className="text-sm text-gray-300 ml-4 mr-2">Tax Threshold NT$</label>
+            <input type="number" value={taxThreshold} onChange={e => setTaxThreshold(Number(e.target.value))} className="w-24 p-2 bg-gray-800 border border-gray-700 rounded text-gray-100" />
+          </div>
         </div>
 
         <div>
@@ -138,7 +161,15 @@ export default function App() {
           {results.length === 0 && !loading && !error && <div className="text-gray-400 mb-4">No results yet — try searching.</div>}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {displayedList.map((r, idx) => (
-              <PriceCard key={idx} item={r} />
+              r.url ? (
+                <a key={idx} href={r.url} target="_blank" rel="noreferrer" className="block">
+                  <PriceCard item={r} shippingCost={shippingCost} applyTax={applyTax} taxThreshold={taxThreshold} taxRate={TAX_RATE} />
+                </a>
+              ) : (
+                <div key={idx}>
+                  <PriceCard item={r} shippingCost={shippingCost} applyTax={applyTax} taxThreshold={taxThreshold} taxRate={TAX_RATE} />
+                </div>
+              )
             ))}
           </div>
         </div>
