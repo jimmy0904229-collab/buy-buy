@@ -4,6 +4,9 @@ from typing import List, Optional
 class SearchRequest(BaseModel):
     q: str
     currency: Optional[str] = "USD"
+    # optional list of market regions to query (Google 'gl' parameter).
+    # Example: ['us','gb','jp'] — if not provided, backend will query a small set of foreign markets.
+    regions: Optional[List[str]] = None
 
 class Item(BaseModel):
     retailer: str

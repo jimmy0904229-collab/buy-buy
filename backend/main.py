@@ -184,58 +184,86 @@ async def search(req: SearchRequest):
     except Exception:
         pass
 
-    # Call SerpApi
-    data = call_serpapi(req.q)
-    shopping = data.get('shopping_results') or []
+    # Query multiple regions (foreign-first) to surface international listings/discounts.
+    requested_regions = req.regions if getattr(req, 'regions', None) else None
+    # default foreign markets (exclude TW by default so we surface non-local prices)
+    default_regions = ['us', 'gb', 'jp']
+    regions = requested_regions if requested_regions else default_regions
 
     items = []
     placeholder = "https://placehold.co/400x400?text=Product+Image"
 
-    if shopping:
+    # collect by unique key (prefer link when available)
+    seen = {}
+    for region in regions:
+        data = call_serpapi(req.q, gl=region)
+        shopping = data.get('shopping_results') or []
         for s in shopping:
             try:
                 title = s.get('title') or s.get('product_title') or s.get('name') or ''
                 price_text = s.get('price') or s.get('extracted_price') or s.get('price_string') or ''
                 thumbnail = s.get('thumbnail') or s.get('thumbnail_image') or s.get('image') or ''
                 source = s.get('source') or s.get('merchant') or s.get('store') or s.get('displayed_at') or 'Retailer'
-                link = s.get('link') or s.get('product_link') or s.get('link') or ''
+                link = s.get('link') or s.get('product_link') or ''
 
                 # preserve original string
                 original_price_string = str(price_text) if price_text is not None else ''
 
-                # strict parse: get numeric, currency, assumed flag and integer TWD
                 parsed_amount, parsed_currency, assumed_usd, price_twd = parse_currency(original_price_string, s)
+                if assumed_usd and original_price_string:
+                    original_price_string = f"{original_price_string} (Assumed USD)"
 
-                # compute shipping, tax and final in integer TWD
                 shipping = 800
                 tax = int(round((price_twd + shipping) * 0.17))
                 final_price = int(round(price_twd + shipping + tax))
 
-                # use parsed values for display
-                amount = parsed_amount
-                currency = parsed_currency
-                if assumed_usd and original_price_string:
-                    original_price_string = f"{original_price_string} (Assumed USD)"
-
-                item = Item(
+                key = link or f"{title}||{source}||{region}"
+                # dedupe: if we already have this link, keep the cheaper one
+                existing = seen.get(key)
+                candidate = dict(
                     retailer=source,
                     image=thumbnail or None,
                     image_url=thumbnail or None,
-                    original_price=amount,
+                    original_price=parsed_amount,
                     original_price_string=original_price_string,
-                    currency=currency,
+                    currency=parsed_currency,
                     price_twd=price_twd,
                     shipping_twd=shipping,
                     tax_twd=tax,
                     final_price_twd=final_price,
                     landed_cost_estimate=final_price,
-                    url=link,
+                    url=link or None,
                     sizes=[],
                     weight='N/A',
+                    region=region,
                 )
-                items.append(item)
+                if existing:
+                    # keep the one with lower final_price_twd
+                    if candidate['final_price_twd'] < existing['final_price_twd']:
+                        seen[key] = candidate
+                else:
+                    seen[key] = candidate
             except Exception:
                 continue
+
+    # include any seen items
+    for v in seen.values():
+        items.append(Item(
+            retailer=v['retailer'],
+            image=v['image'],
+            image_url=v['image_url'],
+            original_price=v['original_price'],
+            original_price_string=v['original_price_string'],
+            currency=v['currency'],
+            price_twd=v['price_twd'],
+            shipping_twd=v['shipping_twd'],
+            tax_twd=v['tax_twd'],
+            final_price_twd=v['final_price_twd'],
+            landed_cost_estimate=v['landed_cost_estimate'],
+            url=v['url'],
+            sizes=v.get('sizes') or [],
+            weight=v.get('weight') or 'N/A',
+        ))
 
     # Fallback to mock/dummy if nothing
     if not items:
