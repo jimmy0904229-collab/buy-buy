@@ -24,8 +24,8 @@ class Item(BaseModel):
     sizes: Optional[List[str]] = Field(default_factory=list)
     weight: Optional[str] = "N/A"
     is_lowest: bool = False
-    discount_percent: Optional[int] = None
     discount_text: Optional[str] = None
+    discount_pct: Optional[float] = None
 
 class SearchResponse(BaseModel):
     query: str

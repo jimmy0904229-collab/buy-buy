@@ -217,32 +217,38 @@ async def search(req: SearchRequest):
                 tax = int(round((price_twd + shipping) * 0.17))
                 final_price = int(round(price_twd + shipping + tax))
 
-                # detect discount if present in SerpApi result
-                discount_percent = None
+                # detect discount info (try strike/list price first, then discount text)
                 discount_text = None
-                # common SerpApi keys that may indicate original/strike price
-                orig_price_candidate = None
-                for k in ('original_price', 'original_price_string', 'was_price', 'strike_price', 'price_before'):
-                    v = s.get(k)
-                    if v:
-                        orig_price_candidate = v
+                discount_pct = None
+                # common keys that might contain pre-discount price
+                strike_keys = ['strike_price', 'original_price', 'price_before', 'list_price', 'before_price', 'retail_price']
+                strike_val = None
+                for k in strike_keys:
+                    if k in s and s.get(k):
+                        strike_val = s.get(k)
                         break
-                # if we have an explicit original vs current, compute percent
-                if orig_price_candidate:
-                    # try to extract numeric value
+                if strike_val:
+                    # parse strike value to TWD and compute percent
+                    _, _, _, strike_twd = parse_currency(str(strike_val), s)
                     try:
-                        m = re.search(r'([0-9,]+\.?[0-9]*)', str(orig_price_candidate))
-                        if m:
-                            orig_val = float(m.group(1).replace(',', ''))
-                            # parse current numeric (parsed_amount) but currency may differ; we compare in original currency if possible
-                            cur_val = parsed_amount or 0.0
-                            if orig_val > 0 and cur_val > 0 and orig_val > cur_val:
-                                pct = int(round((orig_val - cur_val) / orig_val * 100))
-                                discount_percent = pct
-                                discount_text = f"-{pct}%"
+                        if strike_twd and strike_twd > price_twd:
+                            discount_pct = round((strike_twd - price_twd) / strike_twd * 100)
+                            discount_text = f"{discount_pct}% off"
                     except Exception:
-                        discount_percent = None
                         discount_text = None
+
+                # if no strike-based discount, look for textual discount indicators
+                if not discount_text:
+                    disc = s.get('discount') or s.get('savings') or s.get('discount_text') or s.get('sale')
+                    if disc:
+                        dt = str(disc)
+                        m = re.search(r'([0-9]{1,3})\s?%|([0-9]{1,3})\s?％', dt)
+                        if m:
+                            pct = int(m.group(1) or m.group(2))
+                            discount_pct = pct
+                            discount_text = f"{pct}% off"
+                        else:
+                            discount_text = dt
 
                 key = link or f"{title}||{source}||{region}"
                 # dedupe: if we already have this link, keep the cheaper one
@@ -254,8 +260,8 @@ async def search(req: SearchRequest):
                     original_price=parsed_amount,
                     original_price_string=original_price_string,
                     currency=parsed_currency,
-                    discount_percent=discount_percent,
                     discount_text=discount_text,
+                    discount_pct=discount_pct,
                     price_twd=price_twd,
                     shipping_twd=shipping,
                     tax_twd=tax,
@@ -284,8 +290,8 @@ async def search(req: SearchRequest):
             original_price=v['original_price'],
             original_price_string=v['original_price_string'],
             currency=v['currency'],
-            discount_percent=v.get('discount_percent'),
             discount_text=v.get('discount_text'),
+            discount_pct=v.get('discount_pct'),
             price_twd=v['price_twd'],
             shipping_twd=v['shipping_twd'],
             tax_twd=v['tax_twd'],
@@ -321,6 +327,8 @@ async def search(req: SearchRequest):
                     original_price=float(r.get('original_price', 0.0)),
                     original_price_string=original_price_string,
                     currency=r.get('currency', 'USD'),
+                    discount_text=None,
+                    discount_pct=None,
                     price_twd=price_twd,
                     shipping_twd=shipping,
                     tax_twd=tax,
@@ -375,6 +383,8 @@ async def search(req: SearchRequest):
                         original_price=price,
                         original_price_string=original_price_string,
                         currency=currency,
+                        discount_text=None,
+                        discount_pct=None,
                         price_twd=price_twd,
                         shipping_twd=shipping,
                         tax_twd=tax,

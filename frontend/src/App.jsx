@@ -12,22 +12,20 @@ function PriceCard({ item, shippingCost, applyTax, taxThreshold, taxRate }) {
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden shadow-md">
       <div className="relative">
-        {item.discount_percent ? (
-          <div className="absolute top-2 left-2 z-10">
-            <span className="bg-red-500 text-white text-xs font-semibold px-2 py-1 rounded">{item.discount_text || `-${item.discount_percent}%`}</span>
-          </div>
-        ) : item.is_lowest && (
+        {item.is_lowest && (
           <div className="absolute top-2 right-2 z-10">
             <span className="bg-emerald-500 text-emerald-900 text-xs font-semibold px-2 py-1 rounded">Lowest</span>
+          </div>
+        )}
+        {item.discount_text && (
+          <div className="absolute top-2 left-2 z-10">
+            <span className="bg-red-600 text-red-50 text-xs font-semibold px-2 py-1 rounded">{item.discount_text}</span>
           </div>
         )}
         <img src={src} alt={item.retailer} onError={onImgError} className="w-full h-48 object-cover" />
       </div>
       <div className="p-4">
         <h3 className="text-lg font-semibold">{item.retailer}</h3>
-        {item.discount_percent && (
-          <div className="text-sm text-red-300 mt-1">{item.discount_text || `-${item.discount_percent}% off`}</div>
-        )}
         <div className="mt-2">
           <div className="text-2xl font-extrabold text-emerald-400">NT$ {item.price_twd}</div>
           <div className="text-sm text-gray-400">{item.original_price_string ? item.original_price_string : `${item.original_price} ${item.currency}`}</div>
@@ -146,7 +144,7 @@ export default function App() {
         </form>
 
         {/* Control bar: sort + store filter + shipping/tax controls */}
-        <div className="flex flex-col md:flex-row md:items-center md:gap-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4 mb-6">
           <div>
             <label className="text-sm text-gray-300 mr-2">Sort</label>
             <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="p-2 bg-gray-800 border border-gray-700 rounded">
