@@ -217,6 +217,33 @@ async def search(req: SearchRequest):
                 tax = int(round((price_twd + shipping) * 0.17))
                 final_price = int(round(price_twd + shipping + tax))
 
+                # detect discount if present in SerpApi result
+                discount_percent = None
+                discount_text = None
+                # common SerpApi keys that may indicate original/strike price
+                orig_price_candidate = None
+                for k in ('original_price', 'original_price_string', 'was_price', 'strike_price', 'price_before'):
+                    v = s.get(k)
+                    if v:
+                        orig_price_candidate = v
+                        break
+                # if we have an explicit original vs current, compute percent
+                if orig_price_candidate:
+                    # try to extract numeric value
+                    try:
+                        m = re.search(r'([0-9,]+\.?[0-9]*)', str(orig_price_candidate))
+                        if m:
+                            orig_val = float(m.group(1).replace(',', ''))
+                            # parse current numeric (parsed_amount) but currency may differ; we compare in original currency if possible
+                            cur_val = parsed_amount or 0.0
+                            if orig_val > 0 and cur_val > 0 and orig_val > cur_val:
+                                pct = int(round((orig_val - cur_val) / orig_val * 100))
+                                discount_percent = pct
+                                discount_text = f"-{pct}%"
+                    except Exception:
+                        discount_percent = None
+                        discount_text = None
+
                 key = link or f"{title}||{source}||{region}"
                 # dedupe: if we already have this link, keep the cheaper one
                 existing = seen.get(key)
@@ -227,6 +254,8 @@ async def search(req: SearchRequest):
                     original_price=parsed_amount,
                     original_price_string=original_price_string,
                     currency=parsed_currency,
+                    discount_percent=discount_percent,
+                    discount_text=discount_text,
                     price_twd=price_twd,
                     shipping_twd=shipping,
                     tax_twd=tax,
@@ -255,6 +284,8 @@ async def search(req: SearchRequest):
             original_price=v['original_price'],
             original_price_string=v['original_price_string'],
             currency=v['currency'],
+            discount_percent=v.get('discount_percent'),
+            discount_text=v.get('discount_text'),
             price_twd=v['price_twd'],
             shipping_twd=v['shipping_twd'],
             tax_twd=v['tax_twd'],
