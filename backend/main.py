@@ -1,6 +1,7 @@
 import os
 import requests
 import re
+import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -10,12 +11,16 @@ from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
 from .utils.calc import calculate_landed_cost, convert_to_twd
 from .utils import parser, cache, retailer
-import os
 
-# SerpApi configuration (placeholder key)
+# logging
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+logger = logging.getLogger('hypeprice')
+
+# SerpApi configuration (read from env; do not crash at import — handle at runtime)
 SERPAPI_KEY = os.getenv('SERPAPI_KEY')
 if not SERPAPI_KEY:
-    raise RuntimeError("Environment variable SERPAPI_KEY is required. Set SERPAPI_KEY before starting the server.")
+    logger.warning('Environment variable SERPAPI_KEY is not set. /api/search will return 503 until configured.')
 SERPAPI_URL = "https://serpapi.com/search"
 
 
@@ -26,13 +31,18 @@ def call_serpapi(query: str, gl: str = 'tw', hl: str = 'zh-tw'):
         'q': query,
         'gl': gl,
         'hl': hl,
-        'api_key': SERPAPI_KEY,
     }
+    # attach api key at call time to allow runtime swapping and safer import
+    if not SERPAPI_KEY:
+        logger.error('call_serpapi invoked but SERPAPI_KEY is not configured')
+        return {}
+    params['api_key'] = SERPAPI_KEY
     try:
         resp = requests.get(SERPAPI_URL, params=params, timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception:
+        logger.exception('SerpApi request failed')
         return {}
 
 
@@ -51,15 +61,24 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "serpapi_configured": bool(SERPAPI_KEY)}
+
+
 @app.post("/api/search", response_model=SearchResponse)
 async def search(req: SearchRequest):
     if not req.q:
         raise HTTPException(status_code=400, detail="Query parameter `q` is required")
 
     try:
-        print("Search triggered for:", req.q)
+        logger.info("Search triggered for: %s", req.q)
     except Exception:
-        pass
+        logger.exception("Failed logging search trigger")
+
+    # If SERPAPI_KEY isn't configured, return a clear 503 so the deploy/runtime can start
+    if not SERPAPI_KEY:
+        raise HTTPException(status_code=503, detail="SERPAPI_KEY not configured. Set the SERPAPI_KEY environment variable.")
 
     # Query multiple regions (foreign-first) to surface international listings/discounts.
     requested_regions = req.regions if getattr(req, 'regions', None) else None
@@ -148,7 +167,6 @@ async def search(req: SearchRequest):
             sizes=v.get('sizes') or [],
             weight=v.get('weight') or 'N/A',
         ))
-
     # Fallback to mock/dummy if nothing
     if not items:
         # try dummy scraper
