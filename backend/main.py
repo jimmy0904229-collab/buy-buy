@@ -76,9 +76,9 @@ async def search(req: SearchRequest):
     except Exception:
         logger.exception("Failed logging search trigger")
 
-    # If SERPAPI_KEY isn't configured, return a clear 503 so the deploy/runtime can start
+    # If SERPAPI_KEY isn't configured, log a warning and continue to use fallback data
     if not SERPAPI_KEY:
-        raise HTTPException(status_code=503, detail="SERPAPI_KEY not configured. Set the SERPAPI_KEY environment variable.")
+        logger.warning('SERPAPI_KEY is not configured; using fallback/mock data for search results')
 
     # Query multiple regions (foreign-first) to surface international listings/discounts.
     requested_regions = req.regions if getattr(req, 'regions', None) else None
