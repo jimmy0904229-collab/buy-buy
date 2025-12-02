@@ -9,142 +9,15 @@ from typing import List
 from .schemas import SearchRequest, SearchResponse, Item
 from .scrapers.dummy import scrape_dummy
 from .utils.calc import calculate_landed_cost, convert_to_twd
+from .utils import parser, cache, retailer
+import os
 
 # SerpApi configuration (placeholder key)
-SERPAPI_KEY = "6313cd4d2dd307a65fb95b1ae33f759cc0558415e5f36c9698568bd7fabe267f"
+SERPAPI_KEY = os.getenv('SERPAPI_KEY')
+if not SERPAPI_KEY:
+    raise RuntimeError("Environment variable SERPAPI_KEY is required. Set SERPAPI_KEY before starting the server.")
 SERPAPI_URL = "https://serpapi.com/search"
 
-
-# use normalize_price_string_to_twd from utils.calc for normalization
-
-
-def parse_currency(price_str: str, serp_result: dict = None):
-    """Strict deterministic parser for currency and conversion to TWD.
-
-    Returns a tuple: (amount: float, currency_code: str, assumed_usd: bool, price_twd: int)
-
-    Rules applied in order (first match wins):
-    1) TWD: 'NT$', 'NT', 'TWD', 'HK$' -> multiplier 1
-    2) GBP: '£' or 'GBP' -> *41.5
-    3) EUR: '€' or 'EUR' -> *34.0
-    4) JPY: '¥' or 'JPY' -> *0.21
-    5) USD: 'US$' or 'USD' -> *32.5
-    6) Ambiguous '$': if exact like '$100' -> assume USD; else fallback -> assume USD and mark assumed=True
-    """
-    s = (price_str or '')
-    text = s.strip()
-    assumed = False
-
-    # helper: find first numeric token (supports commas and decimals)
-    num_re = re.compile(r'([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)')
-    def extract_number(t: str):
-        m = num_re.search(t)
-        if not m:
-            return 0.0
-        try:
-            return float(m.group(1).replace(',', ''))
-        except Exception:
-            return 0.0
-
-    # 1) TWD / NT / HK$
-    if re.search(r'(NT\$|\bNT\b|\bTWD\b|HK\$)', text, flags=re.IGNORECASE):
-        amt = extract_number(text)
-        return amt, 'TWD', False, int(round(amt))
-
-    # 2) GBP
-    if re.search(r'(£|\bGBP\b)', text, flags=re.IGNORECASE):
-        amt = extract_number(text)
-        twd = int(round(amt * 41.5))
-        return amt, 'GBP', False, twd
-
-    # 3) EUR
-    if re.search(r'(€|\bEUR\b)', text, flags=re.IGNORECASE):
-        amt = extract_number(text)
-        twd = int(round(amt * 34.0))
-        return amt, 'EUR', False, twd
-
-    # 4) JPY
-    if re.search(r'(¥|\bJPY\b)', text, flags=re.IGNORECASE):
-        amt = extract_number(text)
-        twd = int(round(amt * 0.21))
-        return amt, 'JPY', False, twd
-
-    # 5) USD explicit
-    if re.search(r'(US\$|\bUSD\b)', text, flags=re.IGNORECASE):
-        amt = extract_number(text)
-        twd = int(round(amt * 32.5))
-        return amt, 'USD', False, twd
-
-    # 6) Ambiguous dollar sign ($) handling
-    if '$' in text:
-        # If the string is exactly like '$100' (only $ and number), assume USD
-        if re.fullmatch(r'\$\s*[0-9,]+(?:\.[0-9]+)?', text):
-            amt = extract_number(text)
-            twd = int(round(amt * 32.5))
-            return amt, 'USD', True, twd
-
-        # If SerpApi metadata indicates TWD somewhere, prefer TWD
-        if serp_result:
-            # check common keys that might contain currency hints
-            combined = ' '.join([str(v) for v in serp_result.values() if isinstance(v, str)])
-            if re.search(r'(NT\$|\bTWD\b|\bNT\b)', combined, flags=re.IGNORECASE):
-                amt = extract_number(text)
-                return amt, 'TWD', False, int(round(amt))
-
-        # otherwise default to USD but mark assumed
-        amt = extract_number(text)
-        twd = int(round(amt * 32.5))
-        return amt, 'USD', True, twd
-
-    # fallback: no currency symbol - strict: do not guess by magnitude
-    # try to see if serp_result has explicit currency hints
-    if serp_result:
-        combined = ' '.join([str(v) for v in serp_result.values() if isinstance(v, str)])
-        if re.search(r'(NT\$|\bTWD\b|\bNT\b)', combined, flags=re.IGNORECASE):
-            amt = extract_number(text)
-            return amt, 'TWD', False, int(round(amt))
-        if re.search(r'(US\$|\bUSD\b)', combined, flags=re.IGNORECASE):
-            amt = extract_number(text)
-            twd = int(round(amt * 32.5))
-            return amt, 'USD', False, twd
-
-    # final fallback: extract number and assume USD (but mark assumed)
-    amt = extract_number(text)
-    twd = int(round(amt * 32.5))
-    return amt, 'USD', True, twd
-
-
-def parse_price_and_currency(price_text: str):
-    """Return (amount: float, currency: str) inferred from price_text."""
-    if not price_text:
-        return 0.0, 'USD'
-
-    text = price_text.strip()
-    # common patterns
-    # NT$ or TWD
-    if 'NT$' in text or 'TWD' in text or 'NT' in text:
-        m = re.search(r'([0-9,]+\.?[0-9]*)', text)
-        if m:
-            return float(m.group(1).replace(',', '')), 'TWD'
-    # GBP
-    m = re.search(r'£\s*([0-9,]+\.?[0-9]*)', text)
-    if m:
-        return float(m.group(1).replace(',', '')), 'GBP'
-    # JPY
-    m = re.search(r'¥\s*([0-9,]+\.?[0-9]*)', text)
-    if m:
-        return float(m.group(1).replace(',', '')), 'JPY'
-    # USD (dollar symbol ambiguous)
-    m = re.search(r'\$\s*([0-9,]+\.?[0-9]*)', text)
-    if m:
-        return float(m.group(1).replace(',', '')), 'USD'
-
-    # fallback: extract first number and assume USD
-    m = re.search(r'([0-9,]+\.?[0-9]*)', text)
-    if m:
-        return float(m.group(1).replace(',', '')), 'USD'
-
-    return 0.0, 'USD'
 
 
 def call_serpapi(query: str, gl: str = 'tw', hl: str = 'zh-tw'):
@@ -161,6 +34,10 @@ def call_serpapi(query: str, gl: str = 'tw', hl: str = 'zh-tw'):
         return resp.json()
     except Exception:
         return {}
+
+
+# Cached wrapper to reduce SerpApi calls
+call_serpapi_cached = cache.ttl_cache(ttl=120)(call_serpapi)
 
 
 app = FastAPI(title="HypePrice Tracker API")
@@ -196,20 +73,21 @@ async def search(req: SearchRequest):
     # collect by unique key (prefer link when available)
     seen = {}
     for region in regions:
-        data = call_serpapi(req.q, gl=region)
+        data = call_serpapi_cached(req.q, gl=region)
         shopping = data.get('shopping_results') or []
         for s in shopping:
             try:
                 title = s.get('title') or s.get('product_title') or s.get('name') or ''
                 price_text = s.get('price') or s.get('extracted_price') or s.get('price_string') or ''
                 thumbnail = s.get('thumbnail') or s.get('thumbnail_image') or s.get('image') or ''
-                source = s.get('source') or s.get('merchant') or s.get('store') or s.get('displayed_at') or 'Retailer'
+                source_raw = s.get('source') or s.get('merchant') or s.get('store') or s.get('displayed_at') or 'Retailer'
+                source = retailer.normalize_retailer(source_raw)
                 link = s.get('link') or s.get('product_link') or ''
 
                 # preserve original string
                 original_price_string = str(price_text) if price_text is not None else ''
 
-                parsed_amount, parsed_currency, assumed_usd, price_twd = parse_currency(original_price_string, s)
+                parsed_amount, parsed_currency, assumed_usd, price_twd = parser.parse_currency(original_price_string, s)
                 if assumed_usd and original_price_string:
                     original_price_string = f"{original_price_string} (Assumed USD)"
 
@@ -217,38 +95,7 @@ async def search(req: SearchRequest):
                 tax = int(round((price_twd + shipping) * 0.17))
                 final_price = int(round(price_twd + shipping + tax))
 
-                # detect discount info (try strike/list price first, then discount text)
-                discount_text = None
-                discount_pct = None
-                # common keys that might contain pre-discount price
-                strike_keys = ['strike_price', 'original_price', 'price_before', 'list_price', 'before_price', 'retail_price']
-                strike_val = None
-                for k in strike_keys:
-                    if k in s and s.get(k):
-                        strike_val = s.get(k)
-                        break
-                if strike_val:
-                    # parse strike value to TWD and compute percent
-                    _, _, _, strike_twd = parse_currency(str(strike_val), s)
-                    try:
-                        if strike_twd and strike_twd > price_twd:
-                            discount_pct = round((strike_twd - price_twd) / strike_twd * 100)
-                            discount_text = f"{discount_pct}% off"
-                    except Exception:
-                        discount_text = None
-
-                # if no strike-based discount, look for textual discount indicators
-                if not discount_text:
-                    disc = s.get('discount') or s.get('savings') or s.get('discount_text') or s.get('sale')
-                    if disc:
-                        dt = str(disc)
-                        m = re.search(r'([0-9]{1,3})\s?%|([0-9]{1,3})\s?％', dt)
-                        if m:
-                            pct = int(m.group(1) or m.group(2))
-                            discount_pct = pct
-                            discount_text = f"{pct}% off"
-                        else:
-                            discount_text = dt
+                discount_text, discount_pct, strike_twd = parser.detect_discount(s, price_twd)
 
                 key = link or f"{title}||{source}||{region}"
                 # dedupe: if we already have this link, keep the cheaper one
@@ -313,7 +160,7 @@ async def search(req: SearchRequest):
         if fallback:
             for r in fallback:
                 original_price_string = r.get('original_price_string') or str(r.get('original_price', ''))
-                parsed_amount, parsed_currency, assumed_usd, price_twd = parse_currency(original_price_string, r)
+                parsed_amount, parsed_currency, assumed_usd, price_twd = parser.parse_currency(original_price_string, r)
                 if assumed_usd and original_price_string:
                     original_price_string = f"{original_price_string} (Assumed USD)"
                 shipping = 800
@@ -370,7 +217,7 @@ async def search(req: SearchRequest):
                     currency = base[2]
                     # normalize mock price and produce integer TWD
                     original_price_string = f"{price} {currency}"
-                    parsed_amount, parsed_currency, assumed_usd, price_twd = parse_currency(original_price_string)
+                    parsed_amount, parsed_currency, assumed_usd, price_twd = parser.parse_currency(original_price_string)
                     if assumed_usd and original_price_string:
                         original_price_string = f"{original_price_string} (Assumed USD)"
                     shipping = 800

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 
 function PriceCard({ item, shippingCost, applyTax, taxThreshold, taxRate }) {
   const placeholder = 'https://placehold.co/400x400?text=Product+Image'
@@ -61,14 +61,14 @@ function PriceCard({ item, shippingCost, applyTax, taxThreshold, taxRate }) {
 export default function App() {
   const [q, setQ] = useState('Barbour Spey')
   const [results, setResults] = useState([])
-  const [sortOption, setSortOption] = useState('recommended')
-  const [storeFilter, setStoreFilter] = useState('All Stores')
-  const [shippingCost, setShippingCost] = useState(800)
-  const [applyTax, setApplyTax] = useState(true)
-  const [taxThreshold, setTaxThreshold] = useState(0)
+  const [sortOption, setSortOption] = useState(() => localStorage.getItem('sortOption') || 'recommended')
+  const [storeFilter, setStoreFilter] = useState(() => localStorage.getItem('storeFilter') || 'All Stores')
+  const [shippingCost, setShippingCost] = useState(() => Number(localStorage.getItem('shippingCost') || 800))
+  const [applyTax, setApplyTax] = useState(() => (localStorage.getItem('applyTax') || 'true') === 'true')
+  const [taxThreshold, setTaxThreshold] = useState(() => Number(localStorage.getItem('taxThreshold') || 0))
   const TAX_RATE = 0.17
-  const [originCountry, setOriginCountry] = useState('US')
-  const [weightLbs, setWeightLbs] = useState(1)
+  const [originCountry, setOriginCountry] = useState(() => localStorage.getItem('originCountry') || 'US')
+  const [weightLbs, setWeightLbs] = useState(() => Number(localStorage.getItem('weightLbs') || 1))
 
   // Estimated per-lb rates in TWD (reference: BuyandShip pricing page). These are estimates
   // to help quick calculations; users should consult the official page for exact fees.
@@ -110,6 +110,21 @@ export default function App() {
       setLoading(false)
     }
   }
+
+  // persist settings to localStorage when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('sortOption', sortOption)
+      localStorage.setItem('storeFilter', storeFilter)
+      localStorage.setItem('shippingCost', String(shippingCost))
+      localStorage.setItem('applyTax', String(applyTax))
+      localStorage.setItem('taxThreshold', String(taxThreshold))
+      localStorage.setItem('originCountry', originCountry)
+      localStorage.setItem('weightLbs', String(weightLbs))
+    } catch (e) {
+      // ignore storage errors (e.g., private mode)
+    }
+  }, [sortOption, storeFilter, shippingCost, applyTax, taxThreshold, originCountry, weightLbs])
 
   // derived values: store options and the filtered/sorted list
   const storeOptions = useMemo(() => {
